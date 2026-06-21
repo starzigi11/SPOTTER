@@ -107,24 +107,46 @@ if not st.session_state.logged_in:
 else:
     st.write(f"환영합니다, **{st.session_state.username}**님!")
     
-    # ✅ [기능 1] 신체 변화 추적 대시보드 렌더링
+    # ✅ [개선] 신체 변화 추적 대시보드 (일별/주차별/월별 탭 분리)
     saved = st.session_state.user_info
     history = saved.get("history", {})
     
     if history:
         st.markdown("---")
-        st.subheader("📈 나의 신체 변화 추이")
-        # JSON 딕셔너리를 Pandas 데이터프레임으로 변환
+        st.subheader("📈 나의 신체 변화 통계")
+        
+        # JSON 데이터를 데이터프레임으로 파싱
         df = pd.DataFrame.from_dict(history, orient='index')
         df.index = pd.to_datetime(df.index)
-        df = df.sort_index() # 날짜순 정렬
+        df = df.sort_index()
+        df = df.dropna(how='all')
         
-        # 값이 있는 데이터만 차트로 표시
-        chart_df = df.dropna(how='all')
-        if not chart_df.empty:
-            st.line_chart(chart_df[['weight', 'muscle']])
+        if not df.empty:
+            tab1, tab2, tab3 = st.tabs(["🗓️ 일별 기록", "📊 주차별 평균 흐름", "📉 월별 랭킹 추이"])
+            
+            with tab1:
+                st.markdown("**기록한 모든 날짜의 체중 및 근육량 변화입니다.**")
+                st.line_chart(df[['weight', 'muscle']])
+                
+            with tab2:
+                st.markdown("**주 단위(Weekly)로 평균치를 내어 가시성을 높인 그래프입니다.**")
+                # 주간 평균 데이터 리샘플링 ('W' 기준)
+                weekly_df = df.resample('W').mean()
+                if len(weekly_df) >= 1:
+                    st.line_chart(weekly_df[['weight', 'muscle']])
+                else:
+                    st.info("주차별 통계를 내기 위한 데이터 기간이 부족합니다.")
+                    
+            with tab3:
+                st.markdown("**월 단위(Monthly) 장기 변화 프로젝트 그래프입니다.**")
+                # 월간 평균 데이터 리샘플링 ('M' 기준)
+                monthly_df = df.resample('M').mean()
+                if len(monthly_df) >= 1:
+                    st.line_chart(monthly_df[['weight', 'muscle']])
+                else:
+                    st.info("월간 통계를 내기 위한 데이터 기간이 부족합니다.")
         else:
-            st.info("아직 표시할 신체 변화 데이터가 충분하지 않습니다.")
+            st.info("표시할 신체 기록 데이터가 존재하지 않습니다.")
     
     st.markdown("---")
     
@@ -169,7 +191,6 @@ else:
         st.session_state.current_goal = goal
         def get_val(val): return val if val and val != "모름" else "정보 없음"
         
-        # ✅ [기능 1] 날짜별 기록 누적 저장 로직
         db = load_db()
         user_data = db.get(st.session_state.username, {})
         
@@ -362,7 +383,7 @@ else:
             <div style="background-color:#f0f2f6; padding:20px; border-radius:10px; text-align:center; font-family:sans-serif;">
                 <h2 id="time_display" style="font-size:3rem; margin-bottom:10px; color:#333;">00:00:00</h2>
                 <button id="toggle_btn" onclick="toggleTimer()" style="padding:10px 30px; font-size:18px; cursor:pointer; background-color:#4CAF50; color:white; border:none; border-radius:5px; font-weight:bold;">▶ 시작</button>
-                <button onclick="resetTimer()" style="padding:10px 20px; font-size:18px; cursor:pointer; background-color:#f44336; color:white; border:none; border-radius:5px; font-weight:bold; margin-left:10px;">↺ 초기화</button>
+                <button onclick="resetTimer()" style="padding:10px 20px; font-size:18px; cursor:pointer; background-color:#4CAF50; color:white; border:none; border-radius:5px; font-weight:bold; margin-left:10px;">↺ 초기화</button>
             </div>
             <script>
             let timerInterval;
@@ -455,7 +476,6 @@ else:
                 st.subheader("🚫 절대 피해야 할 음식")
                 st.error(data["avoid"])
                 
-        # ✅ [기능 2] 사진 찍어 올리는 AI 식단 감별사 (수면 관리 제외)
         if goal_now != "수면 개선 & 스트레스 관리":
             st.markdown("---")
             st.subheader("📸 AI 식단 감별사 (현재 목표 맞춤 평가)")
