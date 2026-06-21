@@ -2,3 +2,5 @@ streamlit
 google-genai
 requests
 python-dotenv
+pandas
+pillow

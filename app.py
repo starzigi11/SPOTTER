@@ -4,10 +4,15 @@ import os
 import re
 import requests
 import json
+import pandas as pd
+from datetime import datetime
+from PIL import Image
 import streamlit.components.v1 as components
 from dotenv import load_dotenv
 
 # 1. 화면 설정 및 환경변수
+st.set_page_config(layout="wide", page_title="건강 스케줄러")
+
 st.markdown("""
     <style>
         /* 우측 상단 기본 메뉴 햄버거 아이콘 숨기기 */
@@ -102,12 +107,31 @@ if not st.session_state.logged_in:
 else:
     st.write(f"환영합니다, **{st.session_state.username}**님!")
     
+    # ✅ [기능 1] 신체 변화 추적 대시보드 렌더링
+    saved = st.session_state.user_info
+    history = saved.get("history", {})
+    
+    if history:
+        st.markdown("---")
+        st.subheader("📈 나의 신체 변화 추이")
+        # JSON 딕셔너리를 Pandas 데이터프레임으로 변환
+        df = pd.DataFrame.from_dict(history, orient='index')
+        df.index = pd.to_datetime(df.index)
+        df = df.sort_index() # 날짜순 정렬
+        
+        # 값이 있는 데이터만 차트로 표시
+        chart_df = df.dropna(how='all')
+        if not chart_df.empty:
+            st.line_chart(chart_df[['weight', 'muscle']])
+        else:
+            st.info("아직 표시할 신체 변화 데이터가 충분하지 않습니다.")
+    
+    st.markdown("---")
+    
     goal = st.selectbox(
         "오늘의 건강 목표 (필수)", 
         ["다이어트", "건강 유지", "근육량 증가", "수면 개선 & 스트레스 관리"]
     )
-    
-    saved = st.session_state.user_info
     
     with st.form("health_info_form"):
         target_muscles = []
@@ -131,7 +155,6 @@ else:
                 muscle = st.text_input("근육량 (kg)", value=saved.get("muscle", ""))
                 
             with col_b:
-                # ✅ 업무 및 출퇴근 시간 입력 필드 신설
                 work_start = st.text_input("업무 시작 시간 (예: 09:00)", value=saved.get("work_start", "09:00"))
                 work_end = st.text_input("업무 종료 시간 (예: 18:00)", value=saved.get("work_end", "18:00"))
                 commute = st.text_input("편도 이동 시간 (예: 30분)", value=saved.get("commute", "30분"))
@@ -141,14 +164,16 @@ else:
 
         submitted = st.form_submit_button("오늘의 스케줄 생성하기")
 
-    # 4. 메인 로직 및 프롬프트 생성
+    # 4. 메인 로직 및 데이터 저장
     if submitted:
         st.session_state.current_goal = goal
         def get_val(val): return val if val and val != "모름" else "정보 없음"
         
-        # 새로운 입력 데이터 저장
+        # ✅ [기능 1] 날짜별 기록 누적 저장 로직
         db = load_db()
-        db[st.session_state.username] = {
+        user_data = db.get(st.session_state.username, {})
+        
+        user_data.update({
             "gender": gender,
             "age": age,
             "weight": weight,
@@ -159,9 +184,31 @@ else:
             "commute": commute,
             "sleep": sleep,
             "injury": injury
+        })
+        
+        if "history" not in user_data:
+            user_data["history"] = {}
+            
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        
+        try:
+            w_float = float(weight) if weight else None
+        except:
+            w_float = None
+            
+        try:
+            m_float = float(muscle) if muscle else None
+        except:
+            m_float = None
+
+        user_data["history"][today_str] = {
+            "weight": w_float,
+            "muscle": m_float
         }
+        
+        db[st.session_state.username] = user_data
         save_db(db)
-        st.session_state.user_info = db[st.session_state.username]
+        st.session_state.user_info = user_data
         
         extra_info = ""
         prompt_instruction = ""
@@ -192,7 +239,6 @@ else:
         elif goal == "수면 개선 & 스트레스 관리":
             prompt_instruction = "업무 및 연구로 인한 뇌 피로도를 낮추고 수면의 질을 높이는 행동 지침 작성. [DIET]와 [AVOID] 태그 및 식단 관련 내용은 절대 출력하지 마세요."
 
-        # ✅ 일정 제약 조건 프롬프트에 강력하게 주입
         prompt = f"""
         사용자 상태: 체중{get_val(weight)}kg, 키{get_val(height)}cm. 부상: {get_val(injury)}
         
@@ -408,6 +454,28 @@ else:
                 st.success(data["diet"])
                 st.subheader("🚫 절대 피해야 할 음식")
                 st.error(data["avoid"])
+                
+        # ✅ [기능 2] 사진 찍어 올리는 AI 식단 감별사 (수면 관리 제외)
+        if goal_now != "수면 개선 & 스트레스 관리":
+            st.markdown("---")
+            st.subheader("📸 AI 식단 감별사 (현재 목표 맞춤 평가)")
+            uploaded_file = st.file_uploader("오늘 먹을 식단 사진을 올려주세요. AI가 매크로를 분석합니다.", type=["jpg", "jpeg", "png"])
+            
+            if uploaded_file is not None:
+                image = Image.open(uploaded_file)
+                st.image(image, caption='업로드된 식단', use_container_width=True)
+                
+                if st.button("식단 팩트체크 받기"):
+                    with st.spinner("AI가 음식의 성분을 분석 중입니다..."):
+                        try:
+                            vision_prompt = f"이 사진의 음식을 분석해서 대략적인 칼로리와 매크로(탄/단/지)를 추정해줘. 그리고 사용자의 현재 목표({goal_now})에 비추어봤을 때 이 식단이 적절한지 아주 직설적이고 뼈 때리는 조언을 3줄 이내로 해줘."
+                            vision_res = client.models.generate_content(
+                                model='gemini-2.5-flash',
+                                contents=[vision_prompt, image]
+                            )
+                            st.warning(vision_res.text)
+                        except Exception as e:
+                            st.error(f"이미지 분석 중 오류가 발생했습니다: {e}")
             
     st.markdown("---")
     if st.button("로그아웃"):
