@@ -66,7 +66,7 @@ if "current_goal" not in st.session_state: st.session_state.current_goal = None
 if "user_info" not in st.session_state: st.session_state.user_info = {}
 
 # -----------------------------------------
-# ✅ [개선 1] 사이드바 영역: 로그인 및 사용자 설정
+# ✅ 사이드바 영역: 로그인 및 사용자 설정
 # -----------------------------------------
 with st.sidebar:
     st.title("⚙️ SPOTTER 설정")
@@ -122,7 +122,7 @@ with st.sidebar:
             st.rerun()
 
 # -----------------------------------------
-# ✅ [개선 2] 메인 영역: 탭 기반 UI 구조 분리
+# ✅ 메인 영역: 탭 기반 UI 구조 분리
 # -----------------------------------------
 st.title("📅 SPOTTER 대시보드")
 
@@ -153,7 +153,7 @@ if st.session_state.logged_in:
         else:
             st.info("좌측 사이드바에서 신체 정보를 입력하고 저장해주세요.")
 
-# --- 탭 2: 맞춤 스케줄 설계 ---
+    # --- 탭 2: 맞춤 스케줄 설계 ---
     with tab_sched:
         st.subheader("🎯 오늘의 목표 설정")
         goal = st.selectbox("오늘의 건강 목표", ["다이어트", "건강 유지", "근육량 증가", "수면 개선 & 스트레스 관리"])
@@ -161,7 +161,7 @@ if st.session_state.logged_in:
         if goal == "근육량 증가":
             target_muscles = st.multiselect("자극할 운동 부위", ["등", "가슴", "팔", "어깨", "하체"])
             
-if st.button("🚀 스케줄 생성하기", use_container_width=True):
+        if st.button("🚀 스케줄 생성하기", use_container_width=True):
             st.session_state.current_goal = goal
             def get_val(val): return val if val and val != "모름" else "정보 없음"
             
@@ -182,7 +182,6 @@ if st.button("🚀 스케줄 생성하기", use_container_width=True):
             elif goal == "수면 개선 & 스트레스 관리":
                 prompt_instruction = "연구 피로도 낮추고 수면 질 높이는 지침. 식단 제외."
 
-            # ✅ [개선 1] 프롬프트에 닫는 태그 필수 작성 강력 경고 추가
             prompt = f"""사용자: 체중{get_val(weight)}kg. 부상: {get_val(injury)}
 [제약 조건] 업무시간({get_val(work_start)}~{get_val(work_end)})은 집중, 전후 {get_val(commute)} 이동시간 보장.
 {extra_info} / 특별 지시: {prompt_instruction}
@@ -201,13 +200,10 @@ if st.button("🚀 스케줄 생성하기", use_container_width=True):
                 try:
                     res = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
                     
-                    # ✅ [개선 2] AI가 닫는 태그를 빼먹어도 다음 태그 앞까지 강제로 긁어오는 방어형 정규식 함수
                     def extract(tag, text):
-                        # 1순위: 닫는 태그가 정상적으로 있는 경우
                         match = re.search(fr'\[{tag}\](.*?)\[\/{tag}\]', text, re.DOTALL | re.IGNORECASE)
                         if match: return match.group(1).strip()
                         
-                        # 2순위: 닫는 태그를 빼먹은 경우 (다음 여는 태그 '['가 나오거나 텍스트가 끝날 때까지 긁어옴)
                         match = re.search(fr'\[{tag}\](.*?)(?=\n\[[A-Z]+\]|$)', text, re.DOTALL | re.IGNORECASE)
                         return match.group(1).strip() if match else None
                     
@@ -229,30 +225,7 @@ if st.button("🚀 스케줄 생성하기", use_container_width=True):
                         }
                 except Exception as e:
                     st.error(f"서버 오류가 발생했습니다: {e}")        
-        # 스케줄 결과 출력
-        if st.session_state.schedule_data:
-            data = st.session_state.schedule_data
-            goal_now = st.session_state.current_goal
-            
-            st.markdown("---")
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown("#### 📅 오늘 일과 캘린더")
-                st.markdown(data["calendar"] or "오류 발생")
-                if data.get("exercise"):
-                    st.info(data["exercise"])
-            with col2:
-                st.markdown("#### 📝 스케줄 요약")
-                st.success(data["summary"] or "오류 발생")
-                
-                tasks = data["checklist"]
-                if tasks:
-                    completed = sum(1 for i, t in enumerate(tasks) if st.checkbox(t, key=f"check_{i}"))
-                    st.progress(completed / len(tasks) if len(tasks)>0 else 0, text=f"달성도: {int(completed/len(tasks)*100)}%")
-                    
-                if goal_now != "수면 개선 & 스트레스 관리" and data.get("diet"):
-                    st.warning(data["diet"])
-                    st.error(data["avoid"])
+        
         # 스케줄 결과 출력
         if st.session_state.schedule_data:
             data = st.session_state.schedule_data
