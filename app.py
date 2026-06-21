@@ -142,18 +142,18 @@ if st.session_state.logged_in:
                 t1, t2, t3 = st.tabs(["🗓️ 일별 기록", "📊 주차별 평균", "📉 월별 랭킹"])
                 with t1: st.line_chart(df[['weight', 'muscle']])
                 with t2:
-                    weekly_df = df.resample('W').mean()
+                    weekly_df = df.resample('W-SUN').mean()
                     if len(weekly_df) >= 1: st.line_chart(weekly_df[['weight', 'muscle']])
                     else: st.info("주차별 통계 데이터가 부족합니다.")
                 with t3:
-                    monthly_df = df.resample('M').mean()
+                    monthly_df = df.resample('ME').mean()
                     if len(monthly_df) >= 1: st.line_chart(monthly_df[['weight', 'muscle']])
                     else: st.info("월간 통계 데이터가 부족합니다.")
             else: st.info("기록된 신체 데이터가 없습니다.")
         else:
             st.info("좌측 사이드바에서 신체 정보를 입력하고 저장해주세요.")
 
-    # --- 탭 2: 맞춤 스케줄 설계 ---
+# --- 탭 2: 맞춤 스케줄 설계 ---
     with tab_sched:
         st.subheader("🎯 오늘의 목표 설정")
         goal = st.selectbox("오늘의 건강 목표", ["다이어트", "건강 유지", "근육량 증가", "수면 개선 & 스트레스 관리"])
@@ -200,15 +200,51 @@ if st.session_state.logged_in:
                     def extract(tag, text):
                         match = re.search(fr'\[{tag}\](.*?)\[\/{tag}\]', text, re.DOTALL | re.IGNORECASE)
                         return match.group(1).strip() if match else None
-
-                    st.session_state.schedule_data = {
-                        "summary": extract("SUMMARY", res.text), "calendar": extract("CALENDAR", res.text),
-                        "checklist": [t.strip() for t in (extract("CHECKLIST", res.text) or "").split('\n') if t.strip()],
-                        "exercise": extract("EXERCISE", res.text), "diet": extract("DIET", res.text), "avoid": extract("AVOID", res.text)
-                    }
+                    
+                    summary = extract("SUMMARY", res.text)
+                    calendar = extract("CALENDAR", res.text)
+                    
+                    # ✅ [개선] 파싱 실패 시 원본 데이터를 화면에 강제로 띄우는 방어 로직
+                    if not summary or not calendar:
+                        st.error("🚨 AI가 지정된 출력 양식을 무시했습니다. 아래 원본 응답을 확인하세요.")
+                        st.info(res.text) # AI가 실제로 뱉은 텍스트를 그대로 출력
+                        st.session_state.schedule_data = None
+                    else:
+                        st.session_state.schedule_data = {
+                            "summary": summary, 
+                            "calendar": calendar,
+                            "checklist": [t.strip() for t in (extract("CHECKLIST", res.text) or "").split('\n') if t.strip()],
+                            "exercise": extract("EXERCISE", res.text), 
+                            "diet": extract("DIET", res.text), 
+                            "avoid": extract("AVOID", res.text)
+                        }
                 except Exception as e:
-                    st.error("서버 오류가 발생했습니다.")
+                    st.error(f"서버 오류가 발생했습니다: {e}")
         
+        # 스케줄 결과 출력
+        if st.session_state.schedule_data:
+            data = st.session_state.schedule_data
+            goal_now = st.session_state.current_goal
+            
+            st.markdown("---")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("#### 📅 오늘 일과 캘린더")
+                st.markdown(data["calendar"] or "오류 발생")
+                if data.get("exercise"):
+                    st.info(data["exercise"])
+            with col2:
+                st.markdown("#### 📝 스케줄 요약")
+                st.success(data["summary"] or "오류 발생")
+                
+                tasks = data["checklist"]
+                if tasks:
+                    completed = sum(1 for i, t in enumerate(tasks) if st.checkbox(t, key=f"check_{i}"))
+                    st.progress(completed / len(tasks) if len(tasks)>0 else 0, text=f"달성도: {int(completed/len(tasks)*100)}%")
+                    
+                if goal_now != "수면 개선 & 스트레스 관리" and data.get("diet"):
+                    st.warning(data["diet"])
+                    st.error(data["avoid"])
         # 스케줄 결과 출력
         if st.session_state.schedule_data:
             data = st.session_state.schedule_data
