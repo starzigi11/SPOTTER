@@ -15,26 +15,19 @@ st.set_page_config(layout="wide", page_title="건강 스케줄러")
 
 st.markdown("""
     <style>
-        /* 우측 상단 기본 메뉴 햄버거 아이콘 숨기기 */
         #MainMenu {visibility: hidden;}
-        /* 하단 'Made with Streamlit' 워터마크 숨기기 */
         footer {visibility: hidden;}
-        /* 상단 여백(Padding) 줄이기 */
         .block-container {padding-top: 2rem; padding-bottom: 2rem;}
-        
-        /* 버튼 디자인 세련되게 깎기 */
         .stButton>button {
-            border-radius: 8px; /* 모서리를 둥글게 */
-            font-weight: 600;   /* 글씨를 두껍게 */
-            border: 1px solid #E2E8F0; /* 테두리 연하게 */
-            transition: all 0.3s ease; /* 마우스 오버 시 부드러운 애니메이션 */
+            border-radius: 8px; font-weight: 600;
+            border: 1px solid #E2E8F0; transition: all 0.3s ease;
         }
         .stButton>button:hover {
-            transform: translateY(-2px); /* 마우스를 올리면 살짝 위로 떠오르는 효과 */
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); /* 그림자 효과 */
+            transform: translateY(-2px); box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
         }
     </style>
 """, unsafe_allow_html=True)
+
 load_dotenv()
 api_key = os.getenv("GEMINI_API_KEY")
 news_api_key = os.getenv("NEWS_API_KEY")
@@ -44,460 +37,221 @@ if not api_key:
     st.stop()
 
 client = genai.Client(api_key=api_key)
-selected_model = 'gemini-2.5-flash'
 
-# 💾 로컬 파일 데이터베이스 헬퍼 함수
 DB_FILE = "user_db.json"
 
 def load_db():
     if os.path.exists(DB_FILE):
         try:
-            with open(DB_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except:
-            return {}
+            with open(DB_FILE, "r", encoding="utf-8") as f: return json.load(f)
+        except: return {}
     return {}
 
 def save_db(data):
     with open(DB_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
-# 2. BMR 및 BMI 계산 함수
 def calculate_metrics(weight, height, age, gender):
     try:
-        w = float(weight)
-        h = float(height)
-        a = int(age)
-        
+        w, h, a = float(weight), float(height), int(age)
         bmi = w / ((h / 100) ** 2)
-        
-        if gender == "남성":
-            bmr = (10 * w) + (6.25 * h) - (5 * a) + 5
-        else:
-            bmr = (10 * w) + (6.25 * h) - (5 * a) - 161
-            
+        bmr = (10 * w) + (6.25 * h) - (5 * a) + (5 if gender == "남성" else -161)
         return round(bmi, 1), round(bmr, 0)
-    except:
-        return None, None
+    except: return None, None
 
-# 3. 화면 UI 구성
-st.title("📅 SPOTTER")
+# Session State 초기화
+if "logged_in" not in st.session_state: st.session_state.logged_in = False
+if "schedule_data" not in st.session_state: st.session_state.schedule_data = None
+if "current_goal" not in st.session_state: st.session_state.current_goal = None
+if "user_info" not in st.session_state: st.session_state.user_info = {}
 
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
-if "schedule_data" not in st.session_state:
-    st.session_state.schedule_data = None
-if "current_goal" not in st.session_state:
-    st.session_state.current_goal = None
-if "user_info" not in st.session_state:
-    st.session_state.user_info = {}
-
-if not st.session_state.logged_in:
-    username = st.text_input("사용자 이름을 입력하세요")
-    if st.button("로그인"):
-        if not username.strip():
-            st.error("사용자 이름을 정확히 입력해주세요.")
-        else:
-            st.session_state.username = username.strip()
-            st.session_state.logged_in = True
-            
+# -----------------------------------------
+# ✅ [개선 1] 사이드바 영역: 로그인 및 사용자 설정
+# -----------------------------------------
+with st.sidebar:
+    st.title("⚙️ SPOTTER 설정")
+    if not st.session_state.logged_in:
+        username = st.text_input("사용자 이름을 입력하세요")
+        if st.button("로그인"):
+            if not username.strip():
+                st.error("이름을 정확히 입력해주세요.")
+            else:
+                st.session_state.username = username.strip()
+                st.session_state.logged_in = True
+                st.session_state.user_info = load_db().get(st.session_state.username, {})
+                st.rerun()
+    else:
+        st.success(f"**{st.session_state.username}**님, 환영합니다!")
+        saved = st.session_state.user_info
+        
+        st.markdown("### 📋 내 신체 및 일정 정보")
+        gender_options = ["남성", "여성"]
+        saved_gender = saved.get("gender", "남성")
+        gender = st.selectbox("성별", gender_options, index=gender_options.index(saved_gender) if saved_gender in gender_options else 0)
+        age = st.text_input("나이 (만)", value=saved.get("age", ""))
+        weight = st.text_input("몸무게 (kg)", value=saved.get("weight", ""))
+        height = st.text_input("키 (cm)", value=saved.get("height", ""))
+        muscle = st.text_input("근육량 (kg)", value=saved.get("muscle", ""))
+        work_start = st.text_input("업무 시작 (예: 09:00)", value=saved.get("work_start", "09:00"))
+        work_end = st.text_input("업무 종료 (예: 18:00)", value=saved.get("work_end", "18:00"))
+        commute = st.text_input("편도 이동시간 (예: 30분)", value=saved.get("commute", "30분"))
+        sleep = st.text_input("목표 수면시간 (시간)", value=saved.get("sleep", "8"))
+        injury = st.text_input("부상 상태", value=saved.get("injury", "없음"))
+        
+        if st.button("설정 저장"):
             db = load_db()
-            st.session_state.user_info = db.get(st.session_state.username, {})
-            st.rerun()
-else:
-    st.write(f"환영합니다, **{st.session_state.username}**님!")
-    
-    # ✅ [개선] 신체 변화 추적 대시보드 (일별/주차별/월별 탭 분리)
-    saved = st.session_state.user_info
-    history = saved.get("history", {})
-    
-    if history:
-        st.markdown("---")
-        st.subheader("📈 나의 신체 변화 통계")
-        
-        # JSON 데이터를 데이터프레임으로 파싱
-        df = pd.DataFrame.from_dict(history, orient='index')
-        df.index = pd.to_datetime(df.index)
-        df = df.sort_index()
-        df = df.dropna(how='all')
-        
-        if not df.empty:
-            tab1, tab2, tab3 = st.tabs(["🗓️ 일별 기록", "📊 주차별 평균 흐름", "📉 월별 랭킹 추이"])
+            user_data = db.get(st.session_state.username, {})
+            user_data.update({"gender": gender, "age": age, "weight": weight, "height": height, "muscle": muscle, "work_start": work_start, "work_end": work_end, "commute": commute, "sleep": sleep, "injury": injury})
             
-            with tab1:
-                st.markdown("**기록한 모든 날짜의 체중 및 근육량 변화입니다.**")
-                st.line_chart(df[['weight', 'muscle']])
-                
-            with tab2:
-                st.markdown("**주 단위(Weekly)로 평균치를 내어 가시성을 높인 그래프입니다.**")
-                # 주간 평균 데이터 리샘플링 ('W' 기준)
-                weekly_df = df.resample('W').mean()
-                if len(weekly_df) >= 1:
-                    st.line_chart(weekly_df[['weight', 'muscle']])
-                else:
-                    st.info("주차별 통계를 내기 위한 데이터 기간이 부족합니다.")
-                    
-            with tab3:
-                st.markdown("**월 단위(Monthly) 장기 변화 프로젝트 그래프입니다.**")
-                # 월간 평균 데이터 리샘플링 ('M' 기준)
-                monthly_df = df.resample('M').mean()
-                if len(monthly_df) >= 1:
-                    st.line_chart(monthly_df[['weight', 'muscle']])
-                else:
-                    st.info("월간 통계를 내기 위한 데이터 기간이 부족합니다.")
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            if "history" not in user_data: user_data["history"] = {}
+            try: w_float = float(weight) if weight else None
+            except: w_float = None
+            try: m_float = float(muscle) if muscle else None
+            except: m_float = None
+            
+            user_data["history"][today_str] = {"weight": w_float, "muscle": m_float}
+            db[st.session_state.username] = user_data
+            save_db(db)
+            st.session_state.user_info = user_data
+            st.toast("✅ 설정이 저장되었습니다.")
+            
+        st.markdown("---")
+        if st.button("로그아웃"):
+            st.session_state.clear()
+            st.rerun()
+
+# -----------------------------------------
+# ✅ [개선 2] 메인 영역: 탭 기반 UI 구조 분리
+# -----------------------------------------
+st.title("📅 SPOTTER 대시보드")
+
+if st.session_state.logged_in:
+    tab_dash, tab_sched, tab_vision = st.tabs(["📊 통계 대시보드", "📅 맞춤 스케줄 설계", "📸 AI 식단 감별사"])
+    
+    # --- 탭 1: 통계 대시보드 ---
+    with tab_dash:
+        history = st.session_state.user_info.get("history", {})
+        if history:
+            df = pd.DataFrame.from_dict(history, orient='index')
+            df.index = pd.to_datetime(df.index)
+            df = df.sort_index().dropna(how='all')
+            
+            if not df.empty:
+                st.subheader("📈 나의 신체 변화 통계")
+                t1, t2, t3 = st.tabs(["🗓️ 일별 기록", "📊 주차별 평균", "📉 월별 랭킹"])
+                with t1: st.line_chart(df[['weight', 'muscle']])
+                with t2:
+                    weekly_df = df.resample('W').mean()
+                    if len(weekly_df) >= 1: st.line_chart(weekly_df[['weight', 'muscle']])
+                    else: st.info("주차별 통계 데이터가 부족합니다.")
+                with t3:
+                    monthly_df = df.resample('M').mean()
+                    if len(monthly_df) >= 1: st.line_chart(monthly_df[['weight', 'muscle']])
+                    else: st.info("월간 통계 데이터가 부족합니다.")
+            else: st.info("기록된 신체 데이터가 없습니다.")
         else:
-            st.info("표시할 신체 기록 데이터가 존재하지 않습니다.")
-    
-    st.markdown("---")
-    
-    goal = st.selectbox(
-        "오늘의 건강 목표 (필수)", 
-        ["다이어트", "건강 유지", "근육량 증가", "수면 개선 & 스트레스 관리"]
-    )
-    
-    with st.form("health_info_form"):
+            st.info("좌측 사이드바에서 신체 정보를 입력하고 저장해주세요.")
+
+    # --- 탭 2: 맞춤 스케줄 설계 ---
+    with tab_sched:
+        st.subheader("🎯 오늘의 목표 설정")
+        goal = st.selectbox("오늘의 건강 목표", ["다이어트", "건강 유지", "근육량 증가", "수면 개선 & 스트레스 관리"])
         target_muscles = []
         if goal == "근육량 증가":
-            target_muscles = st.multiselect(
-                "오늘 자극할 운동 부위를 선택하세요", 
-                ["등", "가슴", "팔", "어깨", "하체"]
-            )
+            target_muscles = st.multiselect("자극할 운동 부위", ["등", "가슴", "팔", "어깨", "하체"])
             
-        with st.expander("상세 정보 입력 (스케줄 정밀도 향상을 위한 필수 데이터)"):
-            col_a, col_b = st.columns(2)
-            with col_a:
-                gender_options = ["남성", "여성"]
-                saved_gender = saved.get("gender", "남성")
-                gender_idx = gender_options.index(saved_gender) if saved_gender in gender_options else 0
-                gender = st.selectbox("성별", gender_options, index=gender_idx)
-                
-                age = st.text_input("나이 (만)", value=saved.get("age", ""))
-                weight = st.text_input("몸무게 (kg)", value=saved.get("weight", ""))
-                height = st.text_input("키 (cm)", value=saved.get("height", ""))
-                muscle = st.text_input("근육량 (kg)", value=saved.get("muscle", ""))
-                
-            with col_b:
-                work_start = st.text_input("업무 시작 시간 (예: 09:00)", value=saved.get("work_start", "09:00"))
-                work_end = st.text_input("업무 종료 시간 (예: 18:00)", value=saved.get("work_end", "18:00"))
-                commute = st.text_input("편도 이동 시간 (예: 30분)", value=saved.get("commute", "30분"))
-                
-                sleep = st.text_input("목표 수면시간 (시간)", value=saved.get("sleep", "8"))
-                injury = st.text_input("부상 상태", value=saved.get("injury", "없음"))
-
-        submitted = st.form_submit_button("오늘의 스케줄 생성하기")
-
-    # 4. 메인 로직 및 데이터 저장
-    if submitted:
-        st.session_state.current_goal = goal
-        def get_val(val): return val if val and val != "모름" else "정보 없음"
-        
-        db = load_db()
-        user_data = db.get(st.session_state.username, {})
-        
-        user_data.update({
-            "gender": gender,
-            "age": age,
-            "weight": weight,
-            "height": height,
-            "muscle": muscle,
-            "work_start": work_start,
-            "work_end": work_end,
-            "commute": commute,
-            "sleep": sleep,
-            "injury": injury
-        })
-        
-        if "history" not in user_data:
-            user_data["history"] = {}
+        if st.button("🚀 스케줄 생성하기", use_container_width=True):
+            st.session_state.current_goal = goal
+            def get_val(val): return val if val and val != "모름" else "정보 없음"
             
-        today_str = datetime.now().strftime("%Y-%m-%d")
-        
-        try:
-            w_float = float(weight) if weight else None
-        except:
-            w_float = None
+            extra_info = ""
+            prompt_instruction = ""
             
-        try:
-            m_float = float(muscle) if muscle else None
-        except:
-            m_float = None
+            if goal == "다이어트":
+                bmi, bmr = calculate_metrics(weight, height, age, gender)
+                if bmi and bmr:
+                    tdee = bmr * 1.2 
+                    extra_info = f"[팩트 폭력] BMI {bmi}. TDEE 약 {tdee}kcal."
+                prompt_instruction = "탄30, 단35, 지35 비율 식단. 유산소 위주 지침."
+            elif goal == "근육량 증가":
+                m_str = ", ".join(target_muscles) if target_muscles else "전신"
+                prompt_instruction = f"탄50, 단30, 지20 벌크업 식단. {m_str} 중심 웨이트 루틴."
+            elif goal == "건강 유지":
+                prompt_instruction = "탄40, 단30, 지30 식단. 가벼운 생활 운동."
+            elif goal == "수면 개선 & 스트레스 관리":
+                prompt_instruction = "연구 피로도 낮추고 수면 질 높이는 지침. 식단 제외."
 
-        user_data["history"][today_str] = {
-            "weight": w_float,
-            "muscle": m_float
-        }
-        
-        db[st.session_state.username] = user_data
-        save_db(db)
-        st.session_state.user_info = user_data
-        
-        extra_info = ""
-        prompt_instruction = ""
-        
-        if goal == "다이어트":
-            bmi, bmr = calculate_metrics(weight, height, age, gender)
-            if bmi and bmr:
-                avg_bmi = 22.0
-                bmi_diff = round(bmi - avg_bmi, 1)
-                tdee = bmr * 1.2 
-                ramen_count = round((tdee - 500) / 500, 1)
-                
-                extra_info = f"""
-                [팩트 폭력 결과]
-                현재 BMI는 {bmi}입니다. 정상 평균 BMI(22.0) 대비 {bmi_diff}만큼 떨어져 있는 심각한 상태입니다.
-                하루 권장 칼로리 소모량(TDEE)은 약 {tdee}kcal입니다.
-                다이어트를 위해 하루 500kcal를 덜 먹는다고 가정할 때, 남은 칼로리를 라면(500kcal)으로 환산하면 하루에 라면 {ramen_count}개 정도만 먹을 수 있는 수준입니다.
-                """
-            prompt_instruction = "탄수화물 30%, 단백질 35%, 지방 35% 비율에 맞춘 식단 추천. 유산소 위주의 운동 지침. 피해야 할 음식 강력 경고."
+            prompt = f"""사용자: 체중{get_val(weight)}kg. 부상: {get_val(injury)}
+[제약 조건] 업무시간({get_val(work_start)}~{get_val(work_end)})은 집중, 전후 {get_val(commute)} 이동시간 보장.
+{extra_info} / 특별 지시: {prompt_instruction}
 
-        elif goal == "근육량 증가":
-            muscle_str = ", ".join(target_muscles) if target_muscles else "전신"
-            prompt_instruction = f"탄수화물 50%, 단백질 30%, 지방 20% 비율에 맞춘 벌크업 식단. 선택 부위({muscle_str}) 중심 1시간 웨이트 루틴. 근손실 유발 음식 경고."
+[출력 템플릿]
+[SUMMARY] 요약 2줄 [/SUMMARY]
+[CALENDAR] 시간대별 마크다운 표 [/CALENDAR]
+[CHECKLIST] 5가지 목표 (엔터구분) [/CHECKLIST]
+[EXERCISE] 이모지 활용 행동지침 [/EXERCISE]
+[DIET] 식단추천 [/DIET]
+[AVOID] 피할음식 [/AVOID]"""
 
-        elif goal == "건강 유지":
-            prompt_instruction = "탄수화물 40%, 단백질 30%, 지방 30% 밸런스 식단. 가벼운 스트레칭과 생활 운동. 염분/당분 높은 피해야 할 음식 경고."
-
-        elif goal == "수면 개선 & 스트레스 관리":
-            prompt_instruction = "업무 및 연구로 인한 뇌 피로도를 낮추고 수면의 질을 높이는 행동 지침 작성. [DIET]와 [AVOID] 태그 및 식단 관련 내용은 절대 출력하지 마세요."
-
-        prompt = f"""
-        사용자 상태: 체중{get_val(weight)}kg, 키{get_val(height)}cm. 부상: {get_val(injury)}
-        
-        [일정 제약 조건]
-        - 캘린더 작성 시, 업무 시작 시간({get_val(work_start)})부터 종료 시간({get_val(work_end)})까지는 무조건 '업무/연구 집중'으로만 채우세요. 
-        - 또한 업무 시작 전과 종료 후 각각 {get_val(commute)} 동안은 '출근/퇴근 이동' 시간으로 반드시 비워두세요.
-        - 이 제약 시간대에는 절대 개인 운동이나 다른 건강 관리 일정을 배치해서는 안 됩니다.
-        
-        {extra_info}
-        특별 지시: {prompt_instruction}
-        
-        [엄격한 출력 지시사항]
-        AI 모델은 인사말, 서론, 결론을 절대 출력하지 마세요.
-        아래 [출력 템플릿]의 괄호 태그 구조를 그대로 복사하여 내용만 채워넣으세요.
-        
-        [출력 템플릿]
-        [SUMMARY]
-        여기에 스케줄 핵심 요약 2줄 작성
-        [/SUMMARY]
-        
-        [CALENDAR]
-        여기에 하루 시간대별 일과 스케줄을 마크다운 표(Table)로 작성 (위의 일정 제약 조건을 완벽히 지킬 것)
-        [/CALENDAR]
-        
-        [CHECKLIST]
-        여기에 오늘 실천할 5가지 핵심 목표를 하이픈(-) 없이 엔터로만 구분하여 작성
-        [/CHECKLIST]
-        
-        [EXERCISE]
-        여기에 눈에 띄는 이모지를 사용하여 오늘 해야 할 행동 지침 작성
-        [/EXERCISE]
-        """
-        
-        if goal != "수면 개선 & 스트레스 관리":
-            prompt += """
-        [DIET]
-        여기에 아침, 점심, 저녁 메뉴를 매크로 비율에 맞춰 추천
-        [/DIET]
-        
-        [AVOID]
-        여기에 절대 먹지 말아야 할 음식 경고 작성
-        [/AVOID]
-            """
-
-        with st.spinner('AI가 이동 및 근무 시간을 고려하여 맞춤형 스케줄을 설계 중입니다...'):
-            models_to_try = ['gemini-2.5-flash', 'gemini-1.5-flash']
-            
-            for attempt, model_name in enumerate(models_to_try):
+            with st.spinner('스케줄 설계 중...'):
                 try:
-                    if attempt > 0:
-                        st.warning(f"메인 서버 혼잡으로 인해 대체 AI 모델({model_name})로 전환하여 재시도합니다...")
-                        
-                    res = client.models.generate_content(model=model_name, contents=prompt)
-                    raw_text = res.text
-                    
+                    res = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
                     def extract(tag, text):
                         match = re.search(fr'\[{tag}\](.*?)\[\/{tag}\]', text, re.DOTALL | re.IGNORECASE)
                         return match.group(1).strip() if match else None
 
-                    summary = extract("SUMMARY", raw_text)
-                    calendar = extract("CALENDAR", raw_text)
-                    
-                    if not summary and not calendar:
-                        st.error("🚨 AI가 지정된 양식을 따르지 않았습니다. 아래 원본을 확인하세요.")
-                        st.info(raw_text)
-                        st.session_state.schedule_data = None
-                        break
-
                     st.session_state.schedule_data = {
-                        "summary": summary or "요약을 불러오지 못했습니다.",
-                        "calendar": calendar or "캘린더를 불러오지 못했습니다.",
-                        "checklist": [t.strip() for t in (extract("CHECKLIST", raw_text) or "체크리스트 없음").split('\n') if t.strip()],
-                        "exercise": extract("EXERCISE", raw_text),
-                        "diet": extract("DIET", raw_text),
-                        "avoid": extract("AVOID", raw_text),
-                        "extra_info": extra_info,
+                        "summary": extract("SUMMARY", res.text), "calendar": extract("CALENDAR", res.text),
+                        "checklist": [t.strip() for t in (extract("CHECKLIST", res.text) or "").split('\n') if t.strip()],
+                        "exercise": extract("EXERCISE", res.text), "diet": extract("DIET", res.text), "avoid": extract("AVOID", res.text)
                     }
-                    
-                    st.session_state.used_model = model_name
-                    break  
-                    
                 except Exception as e:
-                    st.toast(f"🚨 {model_name} 응답 실패.")
-                    if model_name == models_to_try[-1]:
-                        st.error("🚨 서버 오류가 지속됩니다. 잠시 후 다시 시도해주세요.")
-                        st.session_state.schedule_data = None
+                    st.error("서버 오류가 발생했습니다.")
+        
+        # 스케줄 결과 출력
+        if st.session_state.schedule_data:
+            data = st.session_state.schedule_data
+            goal_now = st.session_state.current_goal
+            
+            st.markdown("---")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("#### 📅 오늘 일과 캘린더")
+                st.markdown(data["calendar"] or "오류 발생")
+                if data.get("exercise"):
+                    st.info(data["exercise"])
+            with col2:
+                st.markdown("#### 📝 스케줄 요약")
+                st.success(data["summary"] or "오류 발생")
+                
+                tasks = data["checklist"]
+                if tasks:
+                    completed = sum(1 for i, t in enumerate(tasks) if st.checkbox(t, key=f"check_{i}"))
+                    st.progress(completed / len(tasks) if len(tasks)>0 else 0, text=f"달성도: {int(completed/len(tasks)*100)}%")
+                    
+                if goal_now != "수면 개선 & 스트레스 관리" and data.get("diet"):
+                    st.warning(data["diet"])
+                    st.error(data["avoid"])
 
-    # 5. 결과 렌더링
-    if st.session_state.schedule_data:
-        data = st.session_state.schedule_data
+    # --- 탭 3: AI 식단 감별사 ---
+    with tab_vision:
+        st.subheader("📸 AI 식단 감별사")
         goal_now = st.session_state.current_goal
-        used_model = st.session_state.get("used_model", "알 수 없음")
-        
-        st.success(f"'{goal_now}' 목표 스케줄이 생성되었습니다! (사용된 AI: {used_model})")
-        
-        if data.get("extra_info"):
-            st.error(data["extra_info"])
-            
-        if goal_now == "건강 유지":
-            st.subheader("📰 오늘의 건강 헤드라인")
-            if not news_api_key:
-                st.warning("News API 키가 설정되지 않았습니다. .env 파일을 확인하세요.")
-            else:
-                try:
-                    news_res = requests.get(f"https://newsapi.org/v2/top-headlines?category=health&apiKey={news_api_key}&pageSize=3")
-                    if news_res.status_code == 200:
-                        articles = news_res.json().get("articles", [])
-                        for idx, art in enumerate(articles):
-                            st.markdown(f"**{idx+1}. [{art['title']}]({art['url']})**")
-                except Exception as e:
-                    st.error("뉴스 로딩 실패")
-                    
-        if goal_now == "수면 개선 & 스트레스 관리":
-            st.subheader("🎧 수면 유도 백색소음 & ON/OFF 타이머")
-            st.markdown("[👉 추천 백색소음 유튜브 링크 재생하기 (클릭)](https://www.youtube.com/watch?v=nMfPqeZjc2c)")
-            
-            sleep_hours = float(saved.get("sleep", "8")) if saved.get("sleep", "8").replace('.','',1).isdigit() else 8.0
-            sleep_secs = int(sleep_hours * 3600)
-            
-            html_code = f"""
-            <div style="background-color:#f0f2f6; padding:20px; border-radius:10px; text-align:center; font-family:sans-serif;">
-                <h2 id="time_display" style="font-size:3rem; margin-bottom:10px; color:#333;">00:00:00</h2>
-                <button id="toggle_btn" onclick="toggleTimer()" style="padding:10px 30px; font-size:18px; cursor:pointer; background-color:#4CAF50; color:white; border:none; border-radius:5px; font-weight:bold;">▶ 시작</button>
-                <button onclick="resetTimer()" style="padding:10px 20px; font-size:18px; cursor:pointer; background-color:#4CAF50; color:white; border:none; border-radius:5px; font-weight:bold; margin-left:10px;">↺ 초기화</button>
-            </div>
-            <script>
-            let timerInterval;
-            let isRunning = false;
-            let initialTime = {sleep_secs};
-            let remainingTime = initialTime;
-
-            function updateDisplay() {{
-                let h = Math.floor(remainingTime / 3600);
-                let m = Math.floor((remainingTime % 3600) / 60);
-                let s = Math.floor(remainingTime % 60);
-                document.getElementById("time_display").innerText = 
-                    String(h).padStart(2, '0') + ":" + 
-                    String(m).padStart(2, '0') + ":" + 
-                    String(s).padStart(2, '0');
-            }}
-
-            function toggleTimer() {{
-                let btn = document.getElementById("toggle_btn");
-                if (isRunning) {{
-                    clearInterval(timerInterval);
-                    btn.innerText = "▶ 계속";
-                    btn.style.backgroundColor = "#4CAF50";
-                    isRunning = false;
-                }} else {{
-                    if(remainingTime <= 0) remainingTime = initialTime;
-                    timerInterval = setInterval(function() {{
-                        remainingTime--;
-                        updateDisplay();
-                        if (remainingTime <= 0) {{
-                            clearInterval(timerInterval);
-                            alert("목표 수면 시간이 지났습니다! 기상하세요!");
-                            btn.innerText = "▶ 시작";
-                            btn.style.backgroundColor = "#4CAF50";
-                            isRunning = false;
-                        }}
-                    }}, 1000);
-                    btn.innerText = "⏸ 일시정지";
-                    btn.style.backgroundColor = "#ff9800";
-                    isRunning = true;
-                }}
-            }}
-            
-            function resetTimer() {{
-                clearInterval(timerInterval);
-                remainingTime = initialTime;
-                updateDisplay();
-                let btn = document.getElementById("toggle_btn");
-                btn.innerText = "▶ 시작";
-                btn.style.backgroundColor = "#4CAF50";
-                isRunning = false;
-            }}
-
-            updateDisplay();
-            </script>
-            """
-            components.html(html_code, height=200)
-
-        st.markdown("---")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.subheader("📅 오늘 일과 캘린더")
-            st.markdown(data["calendar"])
-            
-            if data.get("exercise"):
-                st.markdown("---")
-                st.subheader("🔥 오늘의 행동 지침")
-                st.info(data["exercise"])
-            
-        with col2:
-            st.subheader("📝 스케줄 요약")
-            st.info(data["summary"])
-            
-            st.markdown("---")
-            st.subheader("✅ 오늘의 체크리스트")
-            tasks = data["checklist"]
-            if tasks:
-                completed = 0
-                for i, task in enumerate(tasks):
-                    if st.checkbox(task, key=f"check_{i}"): completed += 1
-                prog = completed / len(tasks)
-                st.progress(prog, text=f"**달성도: {int(prog*100)}%**")
-                
-            if goal_now != "수면 개선 & 스트레스 관리" and data.get("diet") and data.get("avoid"):
-                st.markdown("---")
-                st.subheader("🍽️ 매크로 맞춤 식단 추천")
-                st.success(data["diet"])
-                st.subheader("🚫 절대 피해야 할 음식")
-                st.error(data["avoid"])
-                
-        if goal_now != "수면 개선 & 스트레스 관리":
-            st.markdown("---")
-            st.subheader("📸 AI 식단 감별사 (현재 목표 맞춤 평가)")
-            uploaded_file = st.file_uploader("오늘 먹을 식단 사진을 올려주세요. AI가 매크로를 분석합니다.", type=["jpg", "jpeg", "png"])
-            
+        if not goal_now or goal_now == "수면 개선 & 스트레스 관리":
+            st.warning("먼저 '맞춤 스케줄 설계' 탭에서 식단 관련 목표(다이어트, 근육량 증가 등)로 스케줄을 생성해주세요.")
+        else:
+            uploaded_file = st.file_uploader("음식 사진 업로드", type=["jpg", "jpeg", "png"])
             if uploaded_file is not None:
                 image = Image.open(uploaded_file)
                 st.image(image, caption='업로드된 식단', use_container_width=True)
-                
-                if st.button("식단 팩트체크 받기"):
-                    with st.spinner("AI가 음식의 성분을 분석 중입니다..."):
+                if st.button("식단 팩트체크 받기", use_container_width=True):
+                    with st.spinner("AI 분석 중..."):
                         try:
-                            vision_prompt = f"이 사진의 음식을 분석해서 대략적인 칼로리와 매크로(탄/단/지)를 추정해줘. 그리고 사용자의 현재 목표({goal_now})에 비추어봤을 때 이 식단이 적절한지 아주 직설적이고 뼈 때리는 조언을 3줄 이내로 해줘."
-                            vision_res = client.models.generate_content(
-                                model='gemini-2.5-flash',
-                                contents=[vision_prompt, image]
-                            )
-                            st.warning(vision_res.text)
+                            vision_prompt = f"이 사진의 음식을 분석해서 칼로리와 매크로를 추정하고, 현재 목표({goal_now})에 맞춰 직설적인 조언 3줄."
+                            vision_res = client.models.generate_content(model='gemini-2.5-flash', contents=[vision_prompt, image])
+                            st.error(vision_res.text)
                         except Exception as e:
-                            st.error(f"이미지 분석 중 오류가 발생했습니다: {e}")
-            
-    st.markdown("---")
-    if st.button("로그아웃"):
-        st.session_state.clear()
-        st.rerun()
+                            st.error("이미지 분석 실패.")
+else:
+    st.info("좌측 사이드바 메뉴를 열어 로그인을 진행해주세요. (모바일의 경우 좌측 상단 '>' 화살표 터치)")
