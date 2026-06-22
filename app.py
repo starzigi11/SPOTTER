@@ -124,7 +124,7 @@ with st.sidebar:
 # -----------------------------------------
 # ✅ 메인 영역: 탭 기반 UI 구조 분리
 # -----------------------------------------
-st.title("📅 SPOTTER 대시보드")
+st.title("📅 SPOTTER")
 
 if st.session_state.logged_in:
     tab_dash, tab_sched, tab_vision = st.tabs(["📊 통계 대시보드", "📅 맞춤 스케줄 설계", "📸 AI 식단 감별사"])
